@@ -1,0 +1,29 @@
+zod is a schema declaration & validation library
+
+- Runtime type checking with zod: 
+-> TS checks types of vars at type level, but we may not be sure of type of vars that we will get from external source(ex. api endpoints or form input), zod helps overcome this by checking type at runtime. we can use parsers such as z.number() or z.boolean() along with .parse(var) to restrict type of var to a number (or boolean).
+
+        const numberParser = z.number(); 
+        export const toString = (num: unknown) => {
+            const parsed = numberParser.parse(num);
+            return String(parsed);
+        };
+
+    numberParser.safeParse(num) will return an object {suncces: , data: }
+
+- Verifying unknown APIs: z.object({keys: types()}) works similar to interface. so, if we are getting an api response which is an objects with many key; value pairs, then using z.object and mentioning only the concerned keys in it, will out keys that are not required from the response object.
+
+        const PersonResult = z.object({
+            id: z.number(),
+            name: z.string()
+        });
+
+- similalry, z.array(), ex. response = { k1 : v1, k2: v2, k3: [{}, {}, {}] }, and we want to extract id & name key-value pairs in all objects of the k3 array; then
+    const DataResult = z.object({
+        k3: z.array(PersonResult)
+    })  
+
+- z.infer() to extract a type: if we want a variable of type DataResult, we can do:
+    const var1: z.infer<typeof DataResult>;
+
+- .optional(), .default(), .tuples([z.string(), z.number(), z.string()]), .union(a,b) => (z.a)or(z.b), .enum(["abhishek", "abhi", "ab"]), .min(), .max(), .url(), .extend(), .merge(), .transform((data) => ), .refine((data) => )

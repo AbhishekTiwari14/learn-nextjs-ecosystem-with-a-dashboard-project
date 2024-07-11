@@ -1,0 +1,267 @@
+Creating schema & model for mongoose(mongodb):
+-> This model is created to structure the data to be saved in DB 
+-> src->models->User.ts: create type/interface for each schema & use them to create schemas
+        import mongoose, { Schema } from "mongoose";
+            export interface Message extends mongoose.Document{
+                content: string;
+                createdAt: Date
+            } 
+            const MessageSchema: Schema<Message> = new Schema({
+                content: {
+                    type: String,
+                    required: true
+                },
+                createdAt: {
+                    type: Date,
+                    required: true,
+                    default: Date.now
+                },
+            })
+            export interface User extends mongoose.Document{
+                username: string;
+                email: string;
+                password: string;
+                verifyCode: string;
+                verifyCodeExpiry: Date;
+                isVerified: boolean;
+                isAcceptingMessage: boolean;
+                messages: Message[]
+            } 
+            const UserSchema: Schema<User> = new Schema({
+                username: {
+                    type: String,
+                    required: true,
+                    unique: true
+                },
+                email: {
+                    type: String,
+                    required: [true, "Email is required"],
+                    unique: true,
+                    match: [/^[a-z]+@[a-z]+\.[a-z]+$/, 'please use valid email address']
+                },
+                password: {
+                    type: String,
+                    required: [true, 'Password is required']
+                },
+                verifyCode: {
+                    type: String,
+                    required: [true, 'Verify Code is required']
+                },
+                verifyCodeExpiry: {
+                    type: Date,
+                    required: [true, 'Verify Code Expiry is required']
+                },
+                isVerified: {
+                    type: Boolean,
+                    default: false        
+                },
+                isAcceptingMessage: {
+                    type: Boolean,
+                    default: true
+                },
+                messages: [MessageSchema]
+            })
+
+            const UserModel = (mongoose.models.User as mongoose.Model<User>) || mongoose.model<User>("User", UserSchema); 
+
+            export default UserModel;
+
+Creating Zod Validation Schemas: 
+-> These schemas are created to validate data on runtime, ex. when user clicks on signup button, we want to validate if name entered by him is a valid name(ie, it should'nt have special chars or nos., etc.)
+-> src->schemas-> 
+    -signUpSchema.ts: To validate signup data entered by user , ie, username, email & password: 
+        import {z} from "zod"
+
+        export const usernameValidation = z.string().min(2, "username too small").max(20, "username too long").regex(/^[a-zA-Z0-9]_+$/, "username must contain special character")
+
+        export const signUpSchema = z.object({
+            username: usernameValidation,
+            email: z.string().email({message: 'invalid email address'}),
+            password: z.string().min(6, {message: 'password must be atleast of 6 chrachters'})
+        })
+
+    -verifySchema.ts: to validate cerification code: 
+        export const verifySchema = z.object({
+            verifyCode: z.string().length(6, 'verify code must be of 6 digits')
+        })
+    
+    -signInSchema.ts: to validate signIn data - username & password:
+        export const signInSchema = z.object({
+            identifier: z.string(), //username
+            password: z.string()
+        })
+
+    - acceptMessageSchema.ts: to validate 'acceptMessages' variable:
+        export const acceptMessageSchema = z.object({
+            acceptMessages: z.boolean()
+        })
+    
+    - messageSchema.ts: to validate content variable: 
+        export const messageSchema = z.object({
+            content: z.string().min(10, "content must be of atleast 10 characters").max(300, 'content cannot have more than 300 charachters')
+        })
+
+Connecting to DB: 
+-> get mongo uri from mongodb website and save it in .env.local
+-> src->lib->dbConnect.ts:
+    import mongoose from "mongoose";
+        type ConnectionObject = {
+            isConnected?: number 
+        }
+
+        const connection: ConnectionObject = {};
+
+        async function dbConnect(): Promise<void> {
+            if(connection.isConnected){
+                console.log("already connected to DB");
+                return;
+            }
+            try {
+                const db = await mongoose.connect(process.env.MONGO_URI || '', {});
+                connection.isConnected = db.connections[0].readyState;
+                console.log("DB connected successfully");
+                
+            } catch (error) {
+                console.log("DB connection failed", error);
+                
+                process.exit(1);
+            }
+        }
+        
+        export default dbConnect;
+
+Setting up email: RESEND
+-> save your resesnd api key in .env.local
+-> src->lib->resesnd.ts:
+
+-> src->lib->resend.ts: 
+    import { Resend } from 'resend'
+    export const resend = new Resend(process.env.RESEND_API_KEY);
+
+-> to write email structure: emails-> VerificationEmail.tsx:
+    import * as React from 'react'; 
+        import { Html, Head, Preview, Heading, Row, Text, } from "@react-email/components";
+
+        interface VerificationProps {
+        username: string;
+        otp: string
+        }
+        export default function VerificationEmail({username, otp}: VerificationProps) {
+            return (
+            <Html lang="en">
+            <Head>
+            <title>OTP Verification</title>
+            
+            </Head>
+                <Preview> Here&apos;s Your Verification OTP: {otp}</Preview>
+                <Row>
+                <Heading>Hello {username},</Heading>
+                </Row>
+                <Text>
+                Please use the following OTP to verify your email address: {otp}.
+                This is an automated message. Please do not reply.
+                </Text>
+            </Html>
+        )}
+
+-> write code to send email: src->helpers->sendVerificationEmail.ts: 
+    import {resend} from '../lib/resend'
+        import VerificationEmail from '../../emails/VerificationEmail'
+        import { ApiResponse } from '@/types/APIResponse'
+
+        export async function sendVerificationEmail(email: string, username: string, otp: string): Promise<ApiResponse>{
+            try {
+                await resend.emails.send({
+                    from: 'you@example.com',
+                    to: email,
+                    subject: "Verification code",
+                    react: VerificationEmail({username, otp})
+                });
+                return {success: true, message: "verification code sent successfully"}
+            } catch (error) {
+                console.log("error sending verification code", error);
+                return {success: false, message: "error sending verification code"}
+            }
+        }
+
+-> where we have standardized api response(of sending email) in src->types-> APIResponse.ts:
+    import { Message } from "@/models/User"; 
+        export interface ApiResponse{
+            success: boolean;
+            message: string;
+            isAcceptingMessages?: boolean;
+            messages?: Array<Message>
+        } 
+
+Signup Route: app->api->route.ts:
+    import { NextRequest, NextResponse } from "next/server";
+        import bcryptjs from 'bcryptjs'
+        import dbConnect from "@/lib/dbConnect";
+        import UserModel from "@/models/User";
+        import { sendVerificationEmail } from "@/helpers/sendVerificationEmail";
+
+        export async function POST(request: NextRequest){
+            await dbConnect();
+            try {
+                const {username, email, password} = await request.json();
+                //case1: username already exists & is also verified
+                const existingAndVerifiedUser = await UserModel.findOne({
+                    username,
+                    isVerified: true
+                })
+                if(existingAndVerifiedUser){
+                return NextResponse.json({success: false, message: "username is already taken"}, {status: 400});
+                }
+                
+                //casr2: username already exists but is not verified
+                const existingNonVerifiedUser = await UserModel.findOne({email});
+                const verifyCode = (Math.floor(Math.random() * 900000) + 100000).toString();
+                if(existingNonVerifiedUser){
+                    if(existingNonVerifiedUser.isVerified){
+                        NextResponse.json({success: false, message: "user already exists with this email, go to login"}, {status: 400});
+                    }
+                    //resend verification otp
+                    else{
+                        const hashedPassword = await bcryptjs.hash(password, 10);
+                        existingNonVerifiedUser.password = hashedPassword;
+                        existingNonVerifiedUser.verifyCode = verifyCode;
+                        existingNonVerifiedUser.verifyCodeExpiry = new Date(Date.now() + 3600000); //ie,till 1 hr from code generation
+                        await existingNonVerifiedUser.save();
+                    }
+                }
+                else{
+                    //case3: new user
+                    const hashedPassword = await bcryptjs.hash(password, 10);
+
+                    const verifyCodeExpiry = new Date(Date.now() + 3600000); //ie,till 1 hr from code generation
+
+                    const newUser = new UserModel({
+                        username,
+                        email,
+                        password: hashedPassword,
+                        verifyCode,
+                        verifyCodeExpiry,
+                        isVerified: false,
+                        isAcceptingMessage: true,
+                        messages: []
+                    })
+            
+                    const savedUser = await newUser.save();
+                    console.log(savedUser);
+                }
+                //send verification email
+                const emailResponse = await sendVerificationEmail(email, username, verifyCode);
+                if(!emailResponse.success){
+                    return NextResponse.json({success: false, message: emailResponse.message}, {status: 500})
+                }
+                return NextResponse.json({success: true, message: "user registered successfully, please verify you email"}, {status: 201})
+
+            } catch (error) {
+                console.log("error registering user", error);
+                return NextResponse.json({success: false, message: "error registering user"}, {status: 500});
+                
+            }
+        }
+
+NEXT-AUTH / AUTHJS
+
